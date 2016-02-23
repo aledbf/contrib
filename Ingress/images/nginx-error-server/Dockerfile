@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM gcr.io/google_containers/nginx-slim:0.1
+FROM gcr.io/google_containers/nginx-slim:0.3
 
 ADD nginx.conf /etc/nginx/nginx.conf
 
