@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: simple
+spec:
+  containers:
+  - image: gcr.io/google_containers/haproxy-self-reload:0.1
+    name: haproxy
+    ports:
+    - containerPort: 80
