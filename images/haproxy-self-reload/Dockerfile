@@ -1,4 +1,4 @@
-# Copyright 2015 The Kubernetes Authors. All rights reserved.
+# Copyright 2016 The Kubernetes Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,7 +20,8 @@ MAINTAINER Prashanth B <beeps@google.com>
 RUN curl -sSL -o /sbin/dumb-init https://github.com/Yelp/dumb-init/releases/download/v1.0.2/dumb-init_1.0.2_amd64 && \
   chmod +x /sbin/dumb-init
 
-CMD ["/sbin/dumb-init", "/haproxy-init"]
+ENTRYPOINT ["/sbin/dumb-init"]
+CMD ["/haproxy-init"]
 
 ADD haproxy-init /
 ADD haproxy_reload /
