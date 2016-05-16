@@ -29,6 +29,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hashicorp/go-reap"
 	"github.com/rjeczalik/notify"
 )
 
@@ -67,6 +68,17 @@ func (h *haproxy) reload() error {
 }
 
 func main() {
+	done := make(chan struct{})
+
+	if reap.IsSupported() {
+		pids := make(reap.PidCh, 1)
+		errors := make(reap.ErrorCh, 1)
+		var reapLock sync.RWMutex
+		go reap.ReapChildren(pids, errors, done, &reapLock)
+	} else {
+		log.Println("go-reap isn't supported on your platform")
+	}
+
 	log.Println("triggering haproxy reload to start the process")
 	h := haproxy{"/etc/haproxy/haproxy.cfg", "", &sync.Mutex{}}
 	err := h.reload()
@@ -87,6 +99,8 @@ func main() {
 		select {
 		case <-quit:
 			log.Println("terminating...")
+			close(done)
+
 			os.Exit(0)
 			break
 		case _ = <-c:

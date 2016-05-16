@@ -1,11 +1,12 @@
 all: push
 
 # 0.0.0 shouldn't clobber any released builds
-TAG = 0.1
+TAG = 0.2
 PREFIX = gcr.io/google_containers/haproxy-self-reload
 
 binary: main.go
-	CGO_ENABLED=0 GOOS=linux godep go build -a -installsuffix cgo -ldflags '-w' -o haproxy-init
+	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags '-w' -o haproxy-init
+	goupx haproxy-init
 
 container: binary
 	docker build -t $(PREFIX):$(TAG) .

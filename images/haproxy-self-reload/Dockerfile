@@ -16,11 +16,6 @@
 FROM gcr.io/google_containers/haproxy:0.4
 MAINTAINER Prashanth B <beeps@google.com>
 
-# https://blog.phusion.nl/2015/01/20/docker-and-the-pid-1-zombie-reaping-problem
-RUN curl -sSL -o /sbin/dumb-init https://github.com/Yelp/dumb-init/releases/download/v1.0.2/dumb-init_1.0.2_amd64 && \
-  chmod +x /sbin/dumb-init
-
-ENTRYPOINT ["/sbin/dumb-init"]
 CMD ["/haproxy-init"]
 
 ADD haproxy-init /
