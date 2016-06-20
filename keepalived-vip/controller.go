@@ -109,6 +109,9 @@ type ipvsControllerController struct {
 	configMapName     string
 	ruCfg             []vip
 	ruMD5             string
+
+	syncQueue *taskQueue
+	stopCh    chan struct{}
 }
 
 // getEndpoints returns a list of <endpoint ip>:<port> for a given service/target port combination.
@@ -151,19 +154,8 @@ func (ipvsc *ipvsControllerController) getEndpoints(
 }
 
 // getServices returns a list of services and their endpoints.
-func (ipvsc *ipvsControllerController) getServices() []vip {
+func (ipvsc *ipvsControllerController) getServices(cfgMap *api.ConfigMap) []vip {
 	svcs := []vip{}
-
-	ns, name, err := parseNsName(ipvsc.configMapName)
-	if err != nil {
-		glog.Warningf("%v", err)
-		return []vip{}
-	}
-	cfgMap, err := ipvsc.getConfigMap(ns, name)
-	if err != nil {
-		glog.Warningf("%v", err)
-		return []vip{}
-	}
 
 	// k -> IP to use
 	// v -> <namespace>/<service name>:<lvs method>
@@ -226,10 +218,19 @@ func (ipvsc *ipvsControllerController) sync() {
 		return
 	}
 
-	svc := ipvsc.getServices()
+	ns, name, _ := parseNsName(ipvsc.configMapName)
+
+	cfgMap, err := ipvsc.getConfigMap(ns, name)
+	if err != nil {
+		glog.V(3).Infof("unexpected error searching configmap %v: %v", lbc.nxgConfigMap, err)
+		ipvsc.syncQueue.requeue(key, err)
+		return
+	}
+
+	svc := ipvsc.getServices(cfgMap)
 	ipvsc.ruCfg = svc
 
-	err := ipvsc.keepalived.WriteCfg(svc)
+	err = ipvsc.keepalived.WriteCfg(svc)
 	if err != nil {
 		return
 	}
@@ -254,6 +255,7 @@ func newIPVSController(kubeClient *unversioned.Client, namespace string, useUnic
 		reloadRateLimiter: flowcontrol.NewTokenBucketRateLimiter(reloadQPS, int(reloadQPS)),
 		ruCfg:             []vip{},
 		configMapName:     configMapName,
+		stopCh:            make(chan struct{}),
 	}
 
 	podInfo, err := getPodDetails(kubeClient)
@@ -265,6 +267,8 @@ func newIPVSController(kubeClient *unversioned.Client, namespace string, useUnic
 	if err != nil {
 		glog.Fatalf("Error getting %v: %v", podInfo.PodName, err)
 	}
+
+	ipvsc.syncQueue = NewTaskQueue(ipvsc.sync)
 
 	selector := parseNodeSelector(pod.Spec.NodeSelector)
 	clusterNodes := getClusterNodesIP(kubeClient, selector)
