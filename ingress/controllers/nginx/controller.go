@@ -636,6 +636,9 @@ func (lbc *loadBalancerController) getStreamServices(data map[string]string, pro
 	return svcs
 }
 
+// getDefaultUpstream returns an NGINX upstream associated with the
+// default backend service. In case of error retrieving information
+// configure the upstream to return http code 503.
 func (lbc *loadBalancerController) getDefaultUpstream() *nginx.Upstream {
 	upstream := &nginx.Upstream{
 		Name: defUpstreamName,
@@ -647,7 +650,6 @@ func (lbc *loadBalancerController) getDefaultUpstream() *nginx.Upstream {
 		upstream.Backends = append(upstream.Backends, nginx.NewDefaultServer())
 		return upstream
 	}
-
 	if !svcExists {
 		glog.Warningf("service %v does not exists", svcKey)
 		upstream.Backends = append(upstream.Backends, nginx.NewDefaultServer())
@@ -659,32 +661,19 @@ func (lbc *loadBalancerController) getDefaultUpstream() *nginx.Upstream {
 	endps := lbc.getEndpoints(svc, svc.Spec.Ports[0].TargetPort, api.ProtocolTCP, &healthcheck.Upstream{})
 	if len(endps) == 0 {
 		glog.Warningf("service %v does not have any active endpoints", svcKey)
-		upstream.Backends = append(upstream.Backends, nginx.NewDefaultServer())
-	} else {
-		upstream.Backends = append(upstream.Backends, endps...)
+		endps = []nginx.UpstreamServer{nginx.NewDefaultServer()}
 	}
 
+	upstream.Backends = append(upstream.Backends, endps...)
 	return upstream
 }
 
+// getUpstreamServers returns a list of Upstream and Server to be used in NGINX.
+// An upstream can be used in multiple servers if the namespace, service name and port are the same
 func (lbc *loadBalancerController) getUpstreamServers(ngxCfg config.Configuration, data []interface{}) ([]*nginx.Upstream, []*nginx.Server) {
 	upstreams := lbc.createUpstreams(ngxCfg, data)
-	upstreams[defUpstreamName] = lbc.getDefaultUpstream()
 
-	servers := lbc.createServers(data)
-	if _, ok := servers[defServerName]; !ok {
-		// default server - no servername.
-		// there is no rule with default backend
-		servers[defServerName] = &nginx.Server{
-			Name: defServerName,
-			Locations: []*nginx.Location{{
-				Path:         rootLocation,
-				IsDefBackend: true,
-				Upstream:     *lbc.getDefaultUpstream(),
-			},
-			},
-		}
-	}
+	servers := lbc.createServers(data, upstreams)
 
 	for _, ingIf := range data {
 		ing := ingIf.(*extensions.Ingress)
@@ -728,7 +717,7 @@ func (lbc *loadBalancerController) getUpstreamServers(ngxCfg config.Configuratio
 			}
 			server := servers[host]
 			if server == nil {
-				server = servers["_"]
+				server = servers[defServerName]
 			}
 
 			for _, path := range rule.HTTP.Paths {
@@ -736,24 +725,24 @@ func (lbc *loadBalancerController) getUpstreamServers(ngxCfg config.Configuratio
 				ups := upstreams[upsName]
 
 				nginxPath := path.Path
-				// if there's no path defined we assume /
+				// empty path implies /
 				if nginxPath == "" {
 					lbc.recorder.Eventf(ing, api.EventTypeWarning, "MAPPING",
 						"Ingress rule '%v/%v' contains no path definition. Assuming /", ing.GetNamespace(), ing.GetName())
 					nginxPath = rootLocation
 				}
 
-				// Validate that there is no another previuous
-				// rule for the same host and path.
+				// do not overwrite previous rule/s for the same host and path
 				addLoc := true
 				for _, loc := range server.Locations {
 					if loc.Path == rootLocation && nginxPath == rootLocation && loc.IsDefBackend {
-						loc.Upstream = *ups
 						loc.Auth = *nginxAuth
 						loc.RateLimit = *rl
 						loc.Redirect = *locRew
 						loc.SecureUpstream = secUpstream
 						loc.Whitelist = *wl
+						loc.IsDefBackend = false
+						loc.Upstream = *ups
 
 						addLoc = false
 						continue
@@ -768,7 +757,6 @@ func (lbc *loadBalancerController) getUpstreamServers(ngxCfg config.Configuratio
 				}
 
 				if addLoc {
-
 					server.Locations = append(server.Locations, &nginx.Location{
 						Path:           nginxPath,
 						Upstream:       *ups,
@@ -815,7 +803,7 @@ func (lbc *loadBalancerController) createUpstreams(ngxCfg config.Configuration, 
 	for _, ingIf := range data {
 		ing := ingIf.(*extensions.Ingress)
 
-		hz := healthcheck.ParseAnnotations(ngxCfg, ing)
+		hc := healthcheck.ParseAnnotations(ngxCfg, ing)
 
 		for _, rule := range ing.Spec.Rules {
 			if rule.IngressRuleValue.HTTP == nil {
@@ -824,49 +812,70 @@ func (lbc *loadBalancerController) createUpstreams(ngxCfg config.Configuration, 
 
 			for _, path := range rule.HTTP.Paths {
 				name := fmt.Sprintf("%v-%v-%v", ing.GetNamespace(), path.Backend.ServiceName, path.Backend.ServicePort.String())
+				svcKey := fmt.Sprintf("%v/%v", ing.GetNamespace(), path.Backend.ServiceName)
+
 				if _, ok := upstreams[name]; ok {
 					continue
 				}
-
-				glog.V(3).Infof("creating upstream %v", name)
 				upstreams[name] = nginx.NewUpstream(name)
-
-				svcKey := fmt.Sprintf("%v/%v", ing.GetNamespace(), path.Backend.ServiceName)
-				svcObj, svcExists, err := lbc.svcLister.Store.GetByKey(svcKey)
-
+				be, err := lbc.serviceEndpoints(svcKey, path.Backend.ServicePort.String(), hc)
 				if err != nil {
-					glog.Infof("error getting service %v from the cache: %v", svcKey, err)
+					glog.Warningf("%v", err)
 					continue
 				}
-
-				if !svcExists {
-					glog.Warningf("service %v does not exists", svcKey)
-					continue
-				}
-
-				svc := svcObj.(*api.Service)
-				glog.V(3).Infof("obtaining port information for service %v", svcKey)
-				bp := path.Backend.ServicePort.String()
-				for _, servicePort := range svc.Spec.Ports {
-					// targetPort could be a string, use the name or the port (int)
-					if strconv.Itoa(int(servicePort.Port)) == bp || servicePort.TargetPort.String() == bp || servicePort.Name == bp {
-						endps := lbc.getEndpoints(svc, servicePort.TargetPort, api.ProtocolTCP, hz)
-						if len(endps) == 0 {
-							glog.Warningf("service %v does not have any active endpoints", svcKey)
-						}
-
-						upstreams[name].Backends = append(upstreams[name].Backends, endps...)
-						break
-					}
-				}
+				upstreams[name].Backends = be
 			}
+		}
+
+		if ing.Spec.Backend != nil {
+			name := fmt.Sprintf("%v-%v-%v", ing.GetNamespace(), ing.Spec.Backend.ServiceName, ing.Spec.Backend.ServicePort.String())
+			svcName := fmt.Sprintf("%v/%v", ing.GetNamespace(), ing.Spec.Backend.ServiceName)
+			if _, ok := upstreams[name]; ok {
+				continue
+			}
+			upstreams[name] = nginx.NewUpstream(name)
+			be, err := lbc.serviceEndpoints(svcName, ing.Spec.Backend.ServicePort.String(), hc)
+			if err != nil {
+				glog.Warningf("%v", err)
+				continue
+			}
+			upstreams[name].Backends = be
 		}
 	}
 
 	return upstreams
 }
 
-func (lbc *loadBalancerController) createServers(data []interface{}) map[string]*nginx.Server {
+func (lbc *loadBalancerController) serviceEndpoints(svcName, port string, hz *healthcheck.Upstream) ([]nginx.UpstreamServer, error) {
+	var backends []nginx.UpstreamServer
+
+	svcObj, svcExists, err := lbc.svcLister.Store.GetByKey(svcName)
+	if err != nil {
+		return backends, fmt.Errorf("error getting service %v from the cache: %v", svcName, err)
+	}
+	if !svcExists {
+		return backends, fmt.Errorf("service %v does not exists", svcName)
+	}
+
+	svc := svcObj.(*api.Service)
+	glog.V(3).Infof("obtaining port information for service %v", svcName)
+	for _, servicePort := range svc.Spec.Ports {
+		// targetPort could be a string, use the name or the port (int)
+		if strconv.Itoa(int(servicePort.Port)) == port || servicePort.TargetPort.String() == port || servicePort.Name == port {
+			endps := lbc.getEndpoints(svc, servicePort.TargetPort, api.ProtocolTCP, hz)
+			if len(endps) == 0 {
+				glog.Warningf("service %v does not have any active endpoints", svcName)
+			}
+
+			backends = append(backends, endps...)
+			break
+		}
+	}
+
+	return backends, nil
+}
+
+func (lbc *loadBalancerController) createServers(data []interface{}, upstreams map[string]*nginx.Upstream) map[string]*nginx.Server {
 	servers := make(map[string]*nginx.Server)
 
 	pems := lbc.getPemsFromIngress(data)
@@ -883,13 +892,21 @@ func (lbc *loadBalancerController) createServers(data []interface{}) map[string]
 	}
 
 	if err == nil {
-		pems["_"] = ngxCert
+		pems[defServerName] = ngxCert
 	} else {
 		glog.Warningf("%v", err)
 	}
 
 	for _, ingIf := range data {
 		ing := ingIf.(*extensions.Ingress)
+
+		// only if there is no ingress rule mapping /
+		var defUpstream *nginx.Upstream
+		if ing.Spec.Backend != nil {
+			upsName := fmt.Sprintf("%v-%v-%v", ing.GetNamespace(), ing.Spec.Backend.ServiceName, ing.Spec.Backend.ServicePort.String())
+			glog.V(3).Infof("ingress with catch all backend. Using upstream %v", upsName)
+			defUpstream = upstreams[upsName]
+		}
 
 		for _, rule := range ing.Spec.Rules {
 			host := rule.Host
@@ -899,12 +916,22 @@ func (lbc *loadBalancerController) createServers(data []interface{}) map[string]
 
 			if _, ok := servers[host]; !ok {
 				locs := []*nginx.Location{}
-				locs = append(locs, &nginx.Location{
+				loc := &nginx.Location{
 					Path:         rootLocation,
 					IsDefBackend: true,
 					Upstream:     *lbc.getDefaultUpstream(),
-				})
+				}
+				if defUpstream != nil {
+					if host == "" || host == defServerName {
+						lbc.recorder.Eventf(ing, api.EventTypeWarning, "MAPPING", "error: rules with Spec.Backend are allowed with hostnames")
+					} else {
+						loc.Upstream = *defUpstream
+					}
+				}
+				locs = append(locs, loc)
 				servers[host] = &nginx.Server{Name: host, Locations: locs}
+			} else {
+				glog.Warningf("rule %v/%v uses a host already defined. Skipping server creation")
 			}
 
 			if ngxCert, ok := pems[host]; ok {
@@ -917,6 +944,19 @@ func (lbc *loadBalancerController) createServers(data []interface{}) map[string]
 		}
 	}
 
+	if _, ok := servers[defServerName]; !ok {
+		// default server - no servername.
+		// there is no rule with default backend
+		servers[defServerName] = &nginx.Server{
+			Name: defServerName,
+			Locations: []*nginx.Location{{
+				Path:         rootLocation,
+				IsDefBackend: true,
+				Upstream:     *lbc.getDefaultUpstream(),
+			},
+			},
+		}
+	}
 	return servers
 }
 
