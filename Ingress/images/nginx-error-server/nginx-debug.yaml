@@ -26,6 +26,6 @@ spec:
     spec:
       containers:
       - name: nginx-errors
-        image: aledbf/nginx-error-server:0.1
+        image: aledbf/nginx-error-server:0.2
         ports:
         - containerPort: 80
