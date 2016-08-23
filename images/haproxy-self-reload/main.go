@@ -27,24 +27,26 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/hashicorp/go-reap"
 	"github.com/rjeczalik/notify"
+
+	"k8s.io/kubernetes/pkg/util/flowcontrol"
 )
 
 type haproxy struct {
 	cfg   string
 	sha   string
 	mutex *sync.Mutex
+
+	reloadRateLimiter flowcontrol.RateLimiter
 }
 
 func (h *haproxy) reload() error {
+	h.reloadRateLimiter.Accept()
+
 	h.mutex.Lock()
 	defer h.mutex.Unlock()
-	// this delay is required to avoid random
-	// changes reading the checksum of the file
-	time.Sleep(100 * time.Millisecond)
 
 	c, err := checksum(h.cfg)
 	if err != nil {
@@ -80,7 +82,7 @@ func main() {
 	}
 
 	log.Println("triggering haproxy reload to start the process")
-	h := haproxy{"/etc/haproxy/haproxy.cfg", "", &sync.Mutex{}}
+	h := haproxy{"/etc/haproxy/haproxy.cfg", "", &sync.Mutex{}, flowcontrol.NewTokenBucketRateLimiter(0.1, 1)}
 	err := h.reload()
 	if err != nil {
 		log.Fatalf("unexpected error starting haproxy: %v", err)
