@@ -1,14 +1,15 @@
 {
 	"ImportPath": "k8s.io/contrib/images/haproxy-self-reload",
-	"GoVersion": "go1.6",
-	"GodepVersion": "v65",
-	"Packages": [
-		"./..."
-	],
+	"GoVersion": "go1.7",
+	"GodepVersion": "v74",
 	"Deps": [
 		{
 			"ImportPath": "github.com/hashicorp/go-reap",
 			"Rev": "2d85522212dcf5a84c6b357094f5c44710441912"
+		},
+		{
+			"ImportPath": "github.com/juju/ratelimit",
+			"Rev": "77ed1c8a01217656d2080ad51981f6e99adaa177"
 		},
 		{
 			"ImportPath": "github.com/rjeczalik/notify",
@@ -16,7 +17,22 @@
 		},
 		{
 			"ImportPath": "golang.org/x/sys/unix",
-			"Rev": "833a04a10549a95dc34458c195cbad61bbb6cb4d"
+			"Rev": "9c60d1c508f5134d1ca726b4641db998f2523357"
+		},
+		{
+			"ImportPath": "k8s.io/kubernetes/pkg/util/clock",
+			"Comment": "v1.4.0-alpha.2-1007-ge2c5015",
+			"Rev": "e2c50152ddf4a45e0fa66f9eb903096e63957c73"
+		},
+		{
+			"ImportPath": "k8s.io/kubernetes/pkg/util/flowcontrol",
+			"Comment": "v1.4.0-alpha.2-1007-ge2c5015",
+			"Rev": "e2c50152ddf4a45e0fa66f9eb903096e63957c73"
+		},
+		{
+			"ImportPath": "k8s.io/kubernetes/pkg/util/integer",
+			"Comment": "v1.4.0-alpha.2-1007-ge2c5015",
+			"Rev": "e2c50152ddf4a45e0fa66f9eb903096e63957c73"
 		}
 	]
 }
