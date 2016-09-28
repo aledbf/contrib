@@ -291,6 +291,20 @@ http {
     }
     {{ end }}
 
+    server {
+        listen 80 default_server;
+
+        location /healthz {
+            access_log off;
+            return 200;
+        }
+
+        location / {
+            proxy_pass             http://upstream-default-backend;
+        }
+        {{- template "CUSTOM_ERRORS" $cfg }}
+    }
+
     # default server, used for NGINX healthcheck and access to nginx stats
     server {
         # Use the port 18080 (random value just to avoid known ports) as default port for nginx.
