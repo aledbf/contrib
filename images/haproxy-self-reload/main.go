@@ -28,7 +28,7 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/hashicorp/go-reap"
+	reap "github.com/hashicorp/go-reap"
 	"github.com/rjeczalik/notify"
 
 	"k8s.io/kubernetes/pkg/util/flowcontrol"

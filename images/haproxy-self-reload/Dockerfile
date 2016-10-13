@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-FROM gcr.io/google_containers/haproxy:0.4
+FROM gcr.io/google_containers/haproxy:0.6
 MAINTAINER Prashanth B <beeps@google.com>
 
 CMD ["/haproxy-init"]

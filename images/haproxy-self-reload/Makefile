@@ -5,8 +5,7 @@ TAG = 0.2
 PREFIX = gcr.io/google_containers/haproxy-self-reload
 
 binary: main.go
-	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags '-w' -o haproxy-init
-	goupx haproxy-init
+	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags '-s -w' -o haproxy-init
 
 container: binary
 	docker build -t $(PREFIX):$(TAG) .
