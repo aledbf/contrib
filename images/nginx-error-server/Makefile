@@ -1,7 +1,7 @@
 all: push
 
 # TAG 0.0 shouldn't clobber any release builds
-TAG = 0.2
+TAG = 0.3
 PREFIX = aledbf/nginx-error-server
 
 container:
