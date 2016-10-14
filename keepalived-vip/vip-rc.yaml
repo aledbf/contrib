@@ -35,6 +35,10 @@ spec:
             valueFrom:
               fieldRef:
                 fieldPath: metadata.namespace
+            - name: POD_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
         # to use unicast
         args:
         - --services-configmap=default/vip-configmap

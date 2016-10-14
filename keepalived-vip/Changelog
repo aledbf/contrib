@@ -1,4 +1,7 @@
 
+## 0.10
+- Add PROXY Protocol support using keepalived as VIP provider and haproxy as load balancer
+
 ## 0.9
 - Update godeps
 - Update keepalived to 1.2.24

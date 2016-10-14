@@ -19,6 +19,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"os"
 	"regexp"
@@ -28,7 +29,7 @@ import (
 
 	"github.com/golang/glog"
 	"k8s.io/kubernetes/pkg/api"
-	apierrs "k8s.io/kubernetes/pkg/api/errors"
+	"k8s.io/kubernetes/pkg/client/cache"
 	"k8s.io/kubernetes/pkg/client/unversioned"
 	"k8s.io/kubernetes/pkg/labels"
 	k8sexec "k8s.io/kubernetes/pkg/util/exec"
@@ -42,7 +43,8 @@ var (
 	invalidIfaces = []string{"lo", "docker0", "flannel.1", "cbr0"}
 	nsSvcLbRegex  = regexp.MustCompile(`(.*)/(.*):(.*)|(.*)/(.*)`)
 	vethRegex     = regexp.MustCompile(`^veth.*`)
-	lvsRegex      = regexp.MustCompile(`NAT`)
+	lvsRegex      = regexp.MustCompile(`NAT|PROXY`)
+	keyFunc       = cache.DeletionHandlingMetaNamespaceKeyFunc
 )
 
 type nodeInfo struct {
@@ -69,24 +71,8 @@ type podInfo struct {
 
 // getPodDetails  returns runtime information about the pod: name, namespace and IP of the node
 func getPodDetails(kubeClient *unversioned.Client) (*podInfo, error) {
-	podName := os.Getenv("POD_NAME")
-	podNs := os.Getenv("POD_NAMESPACE")
-
-	if podName == "" || podNs == "" {
-		return nil, fmt.Errorf("Please check the manifest (for missing POD_NAME or POD_NAMESPACE env variables)")
-	}
-
-	err := waitForPodRunning(kubeClient, podNs, podName, time.Millisecond*200, time.Second*30)
-	if err != nil {
-		return nil, err
-	}
-
-	pod, _ := kubeClient.Pods(podNs).Get(podName)
-	if pod == nil {
-		return nil, fmt.Errorf("Unable to get POD information")
-	}
-
-	node, err := kubeClient.Nodes().Get(pod.Spec.NodeName)
+	nodeName := os.Getenv("POD_NODE_NAME")
+	node, err := kubeClient.Nodes().Get(nodeName)
 	if err != nil {
 		return nil, err
 	}
@@ -106,8 +92,8 @@ func getPodDetails(kubeClient *unversioned.Client) (*podInfo, error) {
 	}
 
 	return &podInfo{
-		PodName:      podName,
-		PodNamespace: podNs,
+		PodName:      os.Getenv("POD_NAME"),
+		PodNamespace: os.Getenv("POD_NAMESPACE"),
 		NodeIP:       externalIP,
 	}, nil
 }
@@ -273,7 +259,7 @@ func parseNsName(input string) (string, string, error) {
 func parseNsSvcLVS(input string) (string, string, string, error) {
 	nsSvcLb := nsSvcLbRegex.FindStringSubmatch(input)
 	if len(nsSvcLb) != 6 {
-		return "", "", "", fmt.Errorf("invalid format (namespace/service name[:NAT|DR]) found in '%v'", input)
+		return "", "", "", fmt.Errorf("invalid format (namespace/service name[:NAT|PROXY]) found in '%v'", input)
 	}
 
 	ns := nsSvcLb[1]
@@ -293,7 +279,7 @@ func parseNsSvcLVS(input string) (string, string, string, error) {
 	}
 
 	if !lvsRegex.MatchString(kind) {
-		return "", "", "", fmt.Errorf("invalid LVS method. Only NAT and DR are supported: %v", kind)
+		return "", "", "", fmt.Errorf("invalid LVS method. Only NAT and PROXY are supported: %v", kind)
 	}
 
 	return ns, svc, kind, nil
@@ -312,46 +298,6 @@ func (ns nodeSelector) String() string {
 
 func parseNodeSelector(data map[string]string) string {
 	return nodeSelector(data).String()
-}
-
-func waitForPodRunning(kubeClient *unversioned.Client, ns, podName string, interval, timeout time.Duration) error {
-	condition := func(pod *api.Pod) (bool, error) {
-		if pod.Status.Phase == api.PodRunning {
-			return true, nil
-		}
-		return false, nil
-	}
-
-	return waitForPodCondition(kubeClient, ns, podName, condition, interval, timeout)
-}
-
-// waitForPodCondition waits for a pod in state defined by a condition (func)
-func waitForPodCondition(kubeClient *unversioned.Client, ns, podName string, condition func(pod *api.Pod) (bool, error),
-	interval, timeout time.Duration) error {
-	err := wait.PollImmediate(interval, timeout, func() (bool, error) {
-		pod, err := kubeClient.Pods(ns).Get(podName)
-		if err != nil {
-			if apierrs.IsNotFound(err) {
-				return false, nil
-			}
-		}
-
-		done, err := condition(pod)
-		if err != nil {
-			return false, err
-		}
-		if done {
-			return true, nil
-		}
-
-		return false, nil
-	})
-
-	if err != nil {
-		return fmt.Errorf("timed out waiting to observe own status as Running")
-	}
-
-	return nil
 }
 
 // taskQueue manages a work queue through an independent worker that
@@ -416,5 +362,18 @@ func NewTaskQueue(syncFn func(string) error) *taskQueue {
 		queue:      workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter()),
 		sync:       syncFn,
 		workerDone: make(chan struct{}),
+	}
+}
+
+// copyHaproxyCfg copies the default haproxy configuration file
+// to the mounted directory (the mount overwrites the default file)
+func copyHaproxyCfg() {
+	data, err := ioutil.ReadFile("/haproxy.cfg")
+	if err != nil {
+		glog.Fatalf("unexpected error reading haproxy.cfg: %v", err)
+	}
+	err = ioutil.WriteFile("/etc/haproxy/haproxy.cfg", data, 0644)
+	if err != nil {
+		glog.Fatalf("unexpected error writing haproxy.cfg: %v", err)
 	}
 }

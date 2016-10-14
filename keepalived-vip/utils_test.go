@@ -26,20 +26,21 @@ func TestParseNsSvcLVS(t *testing.T) {
 		Namespace     string
 		Service       string
 		ForwardMethod string
-		ExpectedOk    bool
+		ExpectedErr   bool
 	}{
 		"just service name":      {"echoheaders", "", "", "", true},
 		"missing namespace":      {"echoheaders:NAT", "", "", "", true},
 		"default forward method": {"default/echoheaders", "default", "echoheaders", "NAT", false},
 		"with forward method":    {"default/echoheaders:NAT", "default", "echoheaders", "NAT", false},
 		"DR as forward method":   {"default/echoheaders:DR", "", "", "", true},
+		"PROXY protocol":         {"default/echoheaders:PROXY", "default", "echoheaders", "PROXY", false},
 		"invalid forward method": {"default/echoheaders:AJAX", "", "", "", true},
 	}
 
 	for k, tc := range testcases {
 		ns, svc, lvs, err := parseNsSvcLVS(tc.Input)
 
-		if tc.ExpectedOk && err == nil {
+		if tc.ExpectedErr && err == nil {
 			t.Errorf("%s: expected an error but valid information returned: %v ", k, tc.Input)
 		}
 

@@ -32,23 +32,29 @@ import (
 const (
 	iptablesChain = "KUBE-KEEPALIVED-VIP"
 	keepalivedCfg = "/etc/keepalived/keepalived.conf"
+	haproxyCfg    = "/etc/haproxy/haproxy.cfg"
 )
 
-var keepalivedTmpl = "keepalived.tmpl"
+var (
+	keepalivedTmpl = "keepalived.tmpl"
+	haproxyTmpl    = "haproxy.tmpl"
+)
 
 type keepalived struct {
-	iface      string
-	ip         string
-	netmask    int
-	priority   int
-	nodes      []string
-	neighbors  []string
-	useUnicast bool
-	started    bool
-	vips       []string
-	tmpl       *template.Template
-	cmd        *exec.Cmd
-	ipt        iptables.Interface
+	ip             string
+	iface          string
+	netmask        int
+	priority       int
+	nodes          []string
+	neighbors      []string
+	vips           []string
+	useUnicast     bool
+	started        bool
+	proxyMode      bool
+	keepalivedTmpl *template.Template
+	haproxyTmpl    *template.Template
+	cmd            *exec.Cmd
+	ipt            iptables.Interface
 }
 
 // WriteCfg creates a new keepalived configuration file.
@@ -58,7 +64,6 @@ func (k *keepalived) WriteCfg(svcs []vip) error {
 	if err != nil {
 		return err
 	}
-	defer w.Close()
 
 	k.vips = getVIPs(svcs)
 
@@ -72,13 +77,33 @@ func (k *keepalived) WriteCfg(svcs []vip) error {
 	conf["nodes"] = k.neighbors
 	conf["priority"] = k.priority
 	conf["useUnicast"] = k.useUnicast
+	conf["proxyMode"] = k.proxyMode
 
 	if glog.V(2) {
 		b, _ := json.Marshal(conf)
 		glog.Infof("%v", string(b))
 	}
 
-	return k.tmpl.Execute(w, conf)
+	err = k.keepalivedTmpl.Execute(w, conf)
+	w.Close()
+	if err != nil {
+		return fmt.Errorf("unexpected error creating keepalived.cfg: %v", err)
+	}
+
+	if k.proxyMode {
+		w, err := os.Create(haproxyCfg)
+		if err != nil {
+			return err
+		}
+
+		err = k.haproxyTmpl.Execute(w, conf)
+		w.Close()
+		if err != nil {
+			return fmt.Errorf("unexpected error creating haproxy.cfg: %v", err)
+		}
+	}
+
+	return nil
 }
 
 // getVIPs returns a list of the virtual IP addresses to be used in keepalived
@@ -103,7 +128,7 @@ func (k *keepalived) Start() {
 		glog.V(2).Infof("chain %v already existed", iptablesChain)
 	}
 
-	k.cmd = exec.Command("keepalived",
+	k.cmd = exec.Command("/usr/sbin/keepalived",
 		"--dont-fork",
 		"--log-console",
 		"--release-vips",
@@ -112,11 +137,11 @@ func (k *keepalived) Start() {
 	k.cmd.Stdout = os.Stdout
 	k.cmd.Stderr = os.Stderr
 
-	k.started = true
-
 	if err := k.cmd.Start(); err != nil {
 		glog.Errorf("keepalived error: %v", err)
 	}
+
+	k.started = true
 
 	if err := k.cmd.Wait(); err != nil {
 		glog.Fatalf("keepalived error: %v", err)
@@ -152,7 +177,7 @@ func (k *keepalived) Stop() {
 
 	err = syscall.Kill(k.cmd.Process.Pid, syscall.SIGTERM)
 	if err != nil {
-		fmt.Errorf("error stopping keepalived: %v", err)
+		glog.Errorf("error stopping keepalived: %v", err)
 	}
 }
 
@@ -175,11 +200,18 @@ func (k *keepalived) removeVIP(vip string) error {
 	return nil
 }
 
-func (k *keepalived) loadTemplate() error {
+func (k *keepalived) loadTemplates() error {
 	tmpl, err := template.ParseFiles(keepalivedTmpl)
 	if err != nil {
 		return err
 	}
-	k.tmpl = tmpl
+	k.keepalivedTmpl = tmpl
+
+	tmpl, err = template.ParseFiles(haproxyTmpl)
+	if err != nil {
+		return err
+	}
+	k.haproxyTmpl = tmpl
+
 	return nil
 }

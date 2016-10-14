@@ -28,6 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   kmod \
   ca-certificates \
   iproute2 \
+  curl \
   ipvsadm \
   bash && \
   apt-get clean && \
@@ -42,5 +43,8 @@ RUN mkdir -p /etc/keepalived && \
 COPY kube-keepalived-vip /
 COPY keepalived.tmpl /
 COPY keepalived.conf /etc/keepalived
+COPY haproxy.tmpl /haproxy.tmpl
+COPY haproxy-check.sh /haproxy-check.sh
+COPY haproxy.cfg /
 
 ENTRYPOINT ["/kube-keepalived-vip"]
