@@ -28,7 +28,9 @@ import (
 	"time"
 
 	"github.com/golang/glog"
+
 	"k8s.io/kubernetes/pkg/api"
+	apierrs "k8s.io/kubernetes/pkg/api/errors"
 	"k8s.io/kubernetes/pkg/client/cache"
 	"k8s.io/kubernetes/pkg/client/unversioned"
 	"k8s.io/kubernetes/pkg/labels"
@@ -71,8 +73,24 @@ type podInfo struct {
 
 // getPodDetails  returns runtime information about the pod: name, namespace and IP of the node
 func getPodDetails(kubeClient *unversioned.Client) (*podInfo, error) {
-	nodeName := os.Getenv("POD_NODE_NAME")
-	node, err := kubeClient.Nodes().Get(nodeName)
+	podName := os.Getenv("POD_NAME")
+	podNs := os.Getenv("POD_NAMESPACE")
+
+	if podName == "" || podNs == "" {
+		return nil, fmt.Errorf("Please check the manifest (for missing POD_NAME or POD_NAMESPACE env variables)")
+	}
+
+	err := waitForPodRunning(kubeClient, podNs, podName, time.Millisecond*200, time.Second*30)
+	if err != nil {
+		return nil, err
+	}
+
+	pod, _ := kubeClient.Pods(podNs).Get(podName)
+	if pod == nil {
+		return nil, fmt.Errorf("Unable to get POD information")
+	}
+
+	node, err := kubeClient.Nodes().Get(pod.Spec.NodeName)
 	if err != nil {
 		return nil, err
 	}
@@ -92,8 +110,8 @@ func getPodDetails(kubeClient *unversioned.Client) (*podInfo, error) {
 	}
 
 	return &podInfo{
-		PodName:      os.Getenv("POD_NAME"),
-		PodNamespace: os.Getenv("POD_NAMESPACE"),
+		PodName:      podName,
+		PodNamespace: podNs,
 		NodeIP:       externalIP,
 	}, nil
 }
@@ -298,6 +316,46 @@ func (ns nodeSelector) String() string {
 
 func parseNodeSelector(data map[string]string) string {
 	return nodeSelector(data).String()
+}
+
+func waitForPodRunning(kubeClient *unversioned.Client, ns, podName string, interval, timeout time.Duration) error {
+	condition := func(pod *api.Pod) (bool, error) {
+		if pod.Status.Phase == api.PodRunning {
+			return true, nil
+		}
+		return false, nil
+	}
+
+	return waitForPodCondition(kubeClient, ns, podName, condition, interval, timeout)
+}
+
+// waitForPodCondition waits for a pod in state defined by a condition (func)
+func waitForPodCondition(kubeClient *unversioned.Client, ns, podName string, condition func(pod *api.Pod) (bool, error),
+	interval, timeout time.Duration) error {
+	err := wait.PollImmediate(interval, timeout, func() (bool, error) {
+		pod, err := kubeClient.Pods(ns).Get(podName)
+		if err != nil {
+			if apierrs.IsNotFound(err) {
+				return false, nil
+			}
+		}
+
+		done, err := condition(pod)
+		if err != nil {
+			return false, err
+		}
+		if done {
+			return true, nil
+		}
+
+		return false, nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("timed out waiting to observe own status as Running")
+	}
+
+	return nil
 }
 
 // taskQueue manages a work queue through an independent worker that

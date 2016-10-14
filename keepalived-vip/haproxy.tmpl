@@ -19,7 +19,7 @@ listen stats
   timeout   server 5000
 
 {{ range $i, $svc := .svcs }}
-listen {{ $svc.Name }}-{{ $svc.Port }}
+listen {{ $svc.Name }}-{{ $svc.Port }}-{{ $i }}
   bind      {{ $svc.IP }}:{{ $svc.Port }}
   mode      tcp
   option    redispatch

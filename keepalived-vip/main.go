@@ -101,7 +101,7 @@ func main() {
 
 	err = loadIPVModule()
 	if err != nil {
-		glog.Fatalf("unexpected error: %v", err)
+		glog.Fatalf("unexpected error loading ip_vs module: %v", err)
 	}
 
 	err = changeSysctl()
