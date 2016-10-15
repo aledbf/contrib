@@ -20,6 +20,7 @@ import (
 	"k8s.io/contrib/ingress/controllers/nginx/pkg/ingress/annotations/auth"
 	"k8s.io/contrib/ingress/controllers/nginx/pkg/ingress/annotations/authreq"
 	"k8s.io/contrib/ingress/controllers/nginx/pkg/ingress/annotations/ipwhitelist"
+	"k8s.io/contrib/ingress/controllers/nginx/pkg/ingress/annotations/proxy"
 	"k8s.io/contrib/ingress/controllers/nginx/pkg/ingress/annotations/ratelimit"
 	"k8s.io/contrib/ingress/controllers/nginx/pkg/ingress/annotations/rewrite"
 )
@@ -104,6 +105,7 @@ type Location struct {
 	Whitelist       ipwhitelist.SourceRange
 	EnableCORS      bool
 	ExternalAuth    authreq.External
+	Proxy           proxy.Configuration
 }
 
 // LocationByPath sorts location by path

@@ -47,6 +47,7 @@ import (
 	"k8s.io/contrib/ingress/controllers/nginx/pkg/ingress/annotations/cors"
 	"k8s.io/contrib/ingress/controllers/nginx/pkg/ingress/annotations/healthcheck"
 	"k8s.io/contrib/ingress/controllers/nginx/pkg/ingress/annotations/ipwhitelist"
+	"k8s.io/contrib/ingress/controllers/nginx/pkg/ingress/annotations/proxy"
 	"k8s.io/contrib/ingress/controllers/nginx/pkg/ingress/annotations/ratelimit"
 	"k8s.io/contrib/ingress/controllers/nginx/pkg/ingress/annotations/rewrite"
 	"k8s.io/contrib/ingress/controllers/nginx/pkg/ingress/annotations/secureupstream"
@@ -606,6 +607,9 @@ func (ic *GenericController) getUpstreamServers(ngxCfg config.Configuration, dat
 			glog.V(3).Infof("error reading auth request annotation in Ingress %v/%v: %v", ing.GetNamespace(), ing.GetName(), err)
 		}
 
+		prx := proxy.ParseAnnotations(ngxCfg, ing)
+		glog.V(3).Infof("nginx proxy timeouts %v", prx)
+
 		for _, rule := range ing.Spec.Rules {
 			host := rule.Host
 			if host == "" {
@@ -663,6 +667,7 @@ func (ic *GenericController) getUpstreamServers(ngxCfg config.Configuration, dat
 						loc.Upstream = *ups
 						loc.EnableCORS = eCORS
 						loc.ExternalAuth = ra
+						loc.Proxy = *prx
 
 						addLoc = false
 						continue
@@ -687,6 +692,7 @@ func (ic *GenericController) getUpstreamServers(ngxCfg config.Configuration, dat
 						Whitelist:       *wl,
 						EnableCORS:      eCORS,
 						ExternalAuth:    ra,
+						Proxy:           *prx,
 					})
 				}
 			}
