@@ -13,13 +13,16 @@
 # limitations under the License.
 
 
-FROM gcr.io/google_containers/ubuntu-slim:0.3
+FROM gcr.io/google_containers/ubuntu-slim:0.6
 MAINTAINER Prashanth B <beeps@google.com>
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-  bash curl socat haproxy ca-certificates liblua5.3-0 && \
-  apt-get clean -y && \
-  rm -rf /var/lib/apt/lists/* /tmp/*
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    bash curl socat ca-certificates liblua5.3-0 \
+  && curl -sSL http://mirrors.kernel.org/ubuntu/pool/main/h/haproxy/haproxy_1.7.1-1_amd64.deb -o haproxy.deb \
+  && dpkg -i haproxy.deb \
+  && apt-get clean -y \
+  && rm -rf /var/lib/apt/lists/* /tmp/* haproxy.deb
 
 RUN mkdir -p /etc/haproxy/errors /var/state/haproxy
 RUN for ERROR_CODE in 400 403 404 408 500 502 503 504;do curl -sSL -o /etc/haproxy/errors/$ERROR_CODE.http \
